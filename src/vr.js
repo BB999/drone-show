@@ -1,78 +1,6 @@
 import * as THREE from 'three';
 import * as state from './state.js';
 
-// MR用の影設定を作成
-export function createMRShadow() {
-  // 影用のディレクショナルライトを追加
-  const shadowLight = new THREE.DirectionalLight(0xffffff, 0.5);
-  shadowLight.position.set(0, 10, 0);
-  shadowLight.castShadow = true;
-  shadowLight.shadow.mapSize.width = 2048;
-  shadowLight.shadow.mapSize.height = 2048;
-  shadowLight.shadow.camera.near = 0.5;
-  shadowLight.shadow.camera.far = 50;
-  shadowLight.shadow.camera.left = -5;
-  shadowLight.shadow.camera.right = 5;
-  shadowLight.shadow.camera.top = 5;
-  shadowLight.shadow.camera.bottom = -5;
-  state.scene.add(shadowLight);
-  state.scene.add(shadowLight.target);
-  state.setVrShadowLight(shadowLight);
-
-  // フォールバック用の床面（検出された平面がない場合用）
-  const floorGeometry = new THREE.PlaneGeometry(50, 50);
-  const floorMaterial = new THREE.ShadowMaterial({
-    opacity: 0.3
-  });
-  const floor = new THREE.Mesh(floorGeometry, floorMaterial);
-  floor.rotation.x = -Math.PI / 2;
-  floor.position.y = 0.001;
-  floor.receiveShadow = true;
-  state.scene.add(floor);
-  state.setVrFloor(floor);
-
-  // レンダラーの影を有効化
-  state.renderer.shadowMap.enabled = true;
-  state.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-
-  // ドローンに影を付ける
-  if (state.drone) {
-    state.drone.traverse((child) => {
-      if (child.isMesh) {
-        child.castShadow = true;
-      }
-    });
-  }
-
-  console.log('MR影設定を作成しました');
-}
-
-// MR用の影設定を削除
-export function removeMRShadow() {
-  if (state.vrFloor) {
-    state.scene.remove(state.vrFloor);
-    state.vrFloor.geometry.dispose();
-    state.vrFloor.material.dispose();
-    state.setVrFloor(null);
-  }
-
-  if (state.vrShadowLight) {
-    state.scene.remove(state.vrShadowLight.target);
-    state.scene.remove(state.vrShadowLight);
-    state.setVrShadowLight(null);
-  }
-
-  // 検出された平面の影メッシュを削除
-  state.mrPlaneShadowMeshes.forEach((mesh) => {
-    state.scene.remove(mesh);
-    mesh.geometry.dispose();
-    mesh.material.dispose();
-  });
-  state.mrPlaneShadowMeshes.clear();
-
-  console.log('MR影設定を削除しました');
-}
-
 // VR用の背景とグリッドを作成
 export function createVREnvironment() {
   state.scene.background = new THREE.Color(0xcccccc);
@@ -83,49 +11,6 @@ export function createVREnvironment() {
   gridHelper.position.y = 0;
   state.scene.add(gridHelper);
   state.setGridHelper(gridHelper);
-
-  // 影を受ける床面を追加（広範囲）
-  const floorGeometry = new THREE.PlaneGeometry(gridSize, gridSize);
-  const floorMaterial = new THREE.ShadowMaterial({
-    opacity: 0.4
-  });
-  const floor = new THREE.Mesh(floorGeometry, floorMaterial);
-  floor.rotation.x = -Math.PI / 2;
-  floor.position.y = 0.001;
-  floor.receiveShadow = true;
-  state.scene.add(floor);
-  state.setVrFloor(floor);
-
-  // 影用のディレクショナルライトを追加（広範囲対応）
-  const shadowLight = new THREE.DirectionalLight(0xffffff, 0.8);
-  shadowLight.position.set(10, 20, 10);
-  shadowLight.castShadow = true;
-  shadowLight.shadow.mapSize.width = 4096;
-  shadowLight.shadow.mapSize.height = 4096;
-  shadowLight.shadow.camera.near = 0.5;
-  shadowLight.shadow.camera.far = 100;
-  shadowLight.shadow.camera.left = -50;
-  shadowLight.shadow.camera.right = 50;
-  shadowLight.shadow.camera.top = 50;
-  shadowLight.shadow.camera.bottom = -50;
-  shadowLight.shadow.bias = -0.0001;
-  state.scene.add(shadowLight);
-  // ターゲットもシーンに追加（位置更新を反映させるため）
-  state.scene.add(shadowLight.target);
-  state.setVrShadowLight(shadowLight);
-
-  // レンダラーの影を有効化
-  state.renderer.shadowMap.enabled = true;
-  state.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-
-  // ドローンに影を付ける
-  if (state.drone) {
-    state.drone.traverse((child) => {
-      if (child.isMesh) {
-        child.castShadow = true;
-      }
-    });
-  }
 
   // 練習用障害物を配置
   createTrainingObstacles();
@@ -154,12 +39,6 @@ function createTrainingObstacles() {
   function isValidPosition(x, z, minDist = 1) {
     const dist = Math.sqrt(x * x + z * z);
     return dist >= minDist;
-  }
-
-  // ヘルパー関数：メッシュに影を設定
-  function enableShadow(mesh) {
-    mesh.castShadow = true;
-    mesh.receiveShadow = true;
   }
 
   // ===== ランダムにトーラスゲートを配置 =====
@@ -194,8 +73,7 @@ function createTrainingObstacles() {
     const torus = new THREE.Mesh(geometry, material);
     torus.position.set(x, y, z);
     torus.rotation.set(rotX, rotY, rotZ);
-    enableShadow(torus);
-    torus.userData.isObstacle = true;
+        torus.userData.isObstacle = true;
     torus.userData.type = 'torus';
     torus.userData.outerRadius = radius;
     torus.userData.tubeRadius = tubeRadius;
@@ -233,8 +111,7 @@ function createTrainingObstacles() {
       seededRandom() * Math.PI,
       seededRandom() * 0.4
     );
-    enableShadow(mesh);
-    mesh.userData.isObstacle = true;
+        mesh.userData.isObstacle = true;
     mesh.userData.type = 'cube';
     mesh.userData.size = size;
     state.scene.add(mesh);
@@ -267,8 +144,7 @@ function createTrainingObstacles() {
     });
     const pole = new THREE.Mesh(geometry, material);
     pole.position.set(x, height / 2, z);
-    enableShadow(pole);
-    pole.userData.isObstacle = true;
+        pole.userData.isObstacle = true;
     pole.userData.type = 'pole';
     pole.userData.radius = radius;
     pole.userData.height = height;
@@ -306,8 +182,7 @@ function createTrainingObstacles() {
     const torus = new THREE.Mesh(geometry, material);
     torus.position.set(x, y, z);
     torus.rotation.y = gate.angle + Math.PI / 2;
-    enableShadow(torus);
-    torus.userData.isObstacle = true;
+        torus.userData.isObstacle = true;
     torus.userData.type = 'torus';
     torus.userData.outerRadius = radius;
     torus.userData.tubeRadius = tubeRadius;
@@ -335,8 +210,7 @@ function createTrainingObstacles() {
     });
     const pole = new THREE.Mesh(geometry, material);
     pole.position.set(x, height / 2, z);
-    enableShadow(pole);
-    pole.userData.isObstacle = true;
+        pole.userData.isObstacle = true;
     pole.userData.type = 'pole';
     pole.userData.radius = radius;
     pole.userData.height = height;
@@ -370,8 +244,7 @@ function createTrainingObstacles() {
       seededRandom() * Math.PI,
       seededRandom() * Math.PI
     );
-    enableShadow(mesh);
-    mesh.userData.isObstacle = true;
+        mesh.userData.isObstacle = true;
     mesh.userData.type = 'cube';
     mesh.userData.size = size;
     state.scene.add(mesh);
@@ -407,8 +280,7 @@ function createTrainingObstacles() {
       seededRandom() * Math.PI,
       seededRandom() * 0.5
     );
-    enableShadow(mesh);
-    mesh.userData.isObstacle = true;
+        mesh.userData.isObstacle = true;
     mesh.userData.type = 'cube';
     mesh.userData.size = size;
     state.scene.add(mesh);
@@ -444,8 +316,7 @@ function createTrainingObstacles() {
     const torus = new THREE.Mesh(geometry, material);
     torus.position.set(x, y, z);
     torus.rotation.set(rotX, rotY, rotZ);
-    enableShadow(torus);
-    torus.userData.isObstacle = true;
+        torus.userData.isObstacle = true;
     torus.userData.type = 'torus';
     torus.userData.outerRadius = radius;
     torus.userData.tubeRadius = tubeRadius;
@@ -484,8 +355,7 @@ function createTrainingObstacles() {
       seededRandom() * Math.PI,
       seededRandom() * Math.PI
     );
-    enableShadow(mesh);
-    mesh.userData.isObstacle = true;
+        mesh.userData.isObstacle = true;
     mesh.userData.type = 'cube';
     mesh.userData.size = size;
     state.scene.add(mesh);
@@ -521,8 +391,7 @@ function createTrainingObstacles() {
     const torus = new THREE.Mesh(geometry, material);
     torus.position.set(x, y, z);
     torus.rotation.set(rotX, rotY, rotZ);
-    enableShadow(torus);
-    torus.userData.isObstacle = true;
+        torus.userData.isObstacle = true;
     torus.userData.type = 'torus';
     torus.userData.outerRadius = radius;
     torus.userData.tubeRadius = tubeRadius;
@@ -557,8 +426,7 @@ function createTrainingObstacles() {
     const torus = new THREE.Mesh(geometry, material);
     torus.position.set(x, y, z);
     torus.rotation.set(rotX, rotY, 0);
-    enableShadow(torus);
-    torus.userData.isObstacle = true;
+        torus.userData.isObstacle = true;
     torus.userData.type = 'torus';
     torus.userData.outerRadius = radius;
     torus.userData.tubeRadius = tubeRadius;
@@ -594,8 +462,7 @@ function createTrainingObstacles() {
       seededRandom() * Math.PI,
       seededRandom() * Math.PI
     );
-    enableShadow(mesh);
-    mesh.userData.isObstacle = true;
+        mesh.userData.isObstacle = true;
     mesh.userData.type = 'cube';
     mesh.userData.size = size;
     state.scene.add(mesh);
@@ -624,8 +491,7 @@ function createTrainingObstacles() {
     });
     const pole = new THREE.Mesh(geometry, material);
     pole.position.set(x, height / 2, z);
-    enableShadow(pole);
-    pole.userData.isObstacle = true;
+        pole.userData.isObstacle = true;
     pole.userData.type = 'pole';
     pole.userData.radius = radius;
     pole.userData.height = height;
@@ -644,21 +510,6 @@ export function removeVREnvironment() {
   if (state.gridHelper) {
     state.scene.remove(state.gridHelper);
     state.setGridHelper(null);
-  }
-
-  // 床面を削除
-  if (state.vrFloor) {
-    state.scene.remove(state.vrFloor);
-    state.vrFloor.geometry.dispose();
-    state.vrFloor.material.dispose();
-    state.setVrFloor(null);
-  }
-
-  // 影用ライトを削除
-  if (state.vrShadowLight) {
-    state.scene.remove(state.vrShadowLight.target);
-    state.scene.remove(state.vrShadowLight);
-    state.setVrShadowLight(null);
   }
 
   // 障害物を削除
@@ -734,14 +585,6 @@ export function updatePlanes(frame, referenceSpace) {
   state.detectedPlanes.forEach((planeData, xrPlane) => {
     if (!frame.detectedPlanes.has(xrPlane)) {
       state.detectedPlanes.delete(xrPlane);
-      // 対応する影メッシュも削除
-      if (state.mrPlaneShadowMeshes.has(xrPlane)) {
-        const mesh = state.mrPlaneShadowMeshes.get(xrPlane);
-        state.scene.remove(mesh);
-        mesh.geometry.dispose();
-        mesh.material.dispose();
-        state.mrPlaneShadowMeshes.delete(xrPlane);
-      }
     }
   });
 
@@ -768,95 +611,13 @@ export function updatePlanes(frame, referenceSpace) {
       });
 
       console.log('新しい平面を検出:', xrPlane.orientation);
-
-      // MRモードの場合、水平面には影を受けるメッシュを作成
-      if (state.isMrMode && xrPlane.orientation === 'horizontal') {
-        createPlaneShadowMesh(xrPlane, position, quaternion, polygon);
-      }
     } else {
       const planeData = state.detectedPlanes.get(xrPlane);
       planeData.position = position;
       planeData.quaternion = quaternion;
       planeData.polygon = polygon;
-
-      // 既存の影メッシュを更新
-      if (state.mrPlaneShadowMeshes.has(xrPlane)) {
-        updatePlaneShadowMesh(xrPlane, position, quaternion, polygon);
-      }
     }
   });
-}
-
-// 平面用の影を受けるメッシュを作成
-function createPlaneShadowMesh(xrPlane, position, quaternion, polygon) {
-  if (!polygon || polygon.length < 3) return;
-
-  // ポリゴンの頂点をワールド座標に変換してBufferGeometryを作成
-  const vertices = [];
-  const indices = [];
-
-  for (let i = 0; i < polygon.length; i++) {
-    // ローカル座標（XZ平面上）をVector3に変換
-    const localPoint = new THREE.Vector3(polygon[i].x, 0, polygon[i].z);
-    // クォータニオンで回転してワールド座標系に変換
-    localPoint.applyQuaternion(quaternion);
-    // 位置を加算
-    localPoint.add(position);
-    // わずかに上にオフセット
-    localPoint.y += 0.002;
-    vertices.push(localPoint.x, localPoint.y, localPoint.z);
-  }
-
-  // 三角形分割（ファンで分割）
-  for (let i = 1; i < polygon.length - 1; i++) {
-    indices.push(0, i, i + 1);
-  }
-
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
-  geometry.setIndex(indices);
-  geometry.computeVertexNormals();
-
-  const material = new THREE.ShadowMaterial({
-    opacity: 0.4
-  });
-
-  const mesh = new THREE.Mesh(geometry, material);
-  mesh.receiveShadow = true;
-
-  state.scene.add(mesh);
-  state.mrPlaneShadowMeshes.set(xrPlane, mesh);
-
-  console.log('平面影メッシュを作成: y =', position.y.toFixed(3));
-}
-
-// 平面用の影メッシュを更新
-function updatePlaneShadowMesh(xrPlane, position, quaternion, polygon) {
-  const mesh = state.mrPlaneShadowMeshes.get(xrPlane);
-  if (!mesh || !polygon || polygon.length < 3) return;
-
-  // ポリゴンの頂点をワールド座標に変換してBufferGeometryを作成
-  const vertices = [];
-  const indices = [];
-
-  for (let i = 0; i < polygon.length; i++) {
-    const localPoint = new THREE.Vector3(polygon[i].x, 0, polygon[i].z);
-    localPoint.applyQuaternion(quaternion);
-    localPoint.add(position);
-    localPoint.y += 0.002;
-    vertices.push(localPoint.x, localPoint.y, localPoint.z);
-  }
-
-  for (let i = 1; i < polygon.length - 1; i++) {
-    indices.push(0, i, i + 1);
-  }
-
-  mesh.geometry.dispose();
-  const newGeometry = new THREE.BufferGeometry();
-  newGeometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
-  newGeometry.setIndex(indices);
-  newGeometry.computeVertexNormals();
-  mesh.geometry = newGeometry;
 }
 
 // ドローンの初期配置

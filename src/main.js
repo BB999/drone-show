@@ -11,7 +11,7 @@ import {
   loadSettingsFromStorage
 } from './ui.js';
 import { checkPlaneCollision, updatePreStartupPhysics, updateHoverAnimation, updateReturnToHover } from './physics.js';
-import { createMRShadow, removeMRShadow, processDepthInformation, updatePlanes, createDepthVisualization, positionDrone } from './vr.js';
+import { processDepthInformation, updatePlanes, createDepthVisualization, positionDrone } from './vr.js';
 import {
   updateAutoReturn, handleSpeedChange, handleRightControllerButtons,
   handleStartupSequence, handleSizeChange, handleControllerGrab, handleHandGrab,
@@ -187,62 +187,7 @@ function render() {
   updateFpvCamera();
 
   // VRモード時の影用ライト位置をドローンに追従
-  updateShadowLight();
-
   state.renderer.render(state.scene, state.camera);
-}
-
-// 影用ライトの位置をドローンに追従させる
-function updateShadowLight() {
-  if (!state.vrShadowLight || !state.drone || !state.dronePositioned) return;
-
-  const dronePos = state.drone.position;
-  // ライトをドローンの真上に配置
-  state.vrShadowLight.position.set(dronePos.x, dronePos.y + 10, dronePos.z);
-  // ターゲットをドローン位置に設定
-  state.vrShadowLight.target.position.copy(dronePos);
-  state.vrShadowLight.target.updateMatrixWorld();
-
-  // MRモードの場合、ドローン直下の最も近い平面までの距離で影の範囲を制限
-  if (state.isMrMode && state.detectedPlanes.size > 0) {
-    let nearestPlaneDistance = 50; // デフォルトの最大距離
-
-    state.detectedPlanes.forEach((planeData) => {
-      const { position, quaternion, polygon } = planeData;
-
-      // 水平な平面のみ対象
-      const planeNormal = new THREE.Vector3(0, 1, 0).applyQuaternion(quaternion);
-      if (Math.abs(planeNormal.y) < 0.7) return;
-
-      // ドローンより下にある平面のみ
-      if (position.y >= dronePos.y) return;
-
-      // ドローンが平面の範囲内にいるか確認
-      const inverseQuaternion = quaternion.clone().invert();
-      const localDronePos = dronePos.clone().sub(position).applyQuaternion(inverseQuaternion);
-
-      let inside = false;
-      for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
-        const xi = polygon[i].x, zi = polygon[i].z;
-        const xj = polygon[j].x, zj = polygon[j].z;
-
-        const intersect = ((zi > localDronePos.z) !== (zj > localDronePos.z))
-          && (localDronePos.x < (xj - xi) * (localDronePos.z - zi) / (zj - zi) + xi);
-        if (intersect) inside = !inside;
-      }
-
-      if (inside) {
-        const distanceToPlane = dronePos.y - position.y;
-        if (distanceToPlane < nearestPlaneDistance) {
-          nearestPlaneDistance = distanceToPlane;
-        }
-      }
-    });
-
-    // シャドウカメラのfarを最も近い平面までの距離 + マージンに設定
-    state.vrShadowLight.shadow.camera.far = 10 + nearestPlaneDistance + 0.1;
-    state.vrShadowLight.shadow.camera.updateProjectionMatrix();
-  }
 }
 
 // FPVカメラの更新
@@ -475,6 +420,11 @@ function getAnimatedPositionX(basePos, index, animTime) {
 }
 
 // Aボタン用フォーメーションアニメーション処理（K → MU → I → (^_^)）
+// パフォーマンス最適化: 定数の事前計算
+const ARRIVAL_THRESHOLD_SQ = 0.012 * 0.012; // 二乗で比較してsqrt省略
+const CLOSE_THRESHOLD_SQ = 0.04 * 0.04;
+const MIN_DISTANCE_SQ = 0.001 * 0.001;
+
 function updateFormationAnimation() {
   if (!state.formationAnimating || state.droneChildren.length === 0) return;
 
@@ -490,33 +440,39 @@ function updateFormationAnimation() {
   }
 
   // 基本物理パラメータ（慣性を重視）
-  const baseAcceleration = 0.0012; // 緩やかな加速
-  const baseMaxSpeed = 0.010; // 最高速度
-  const arrivalThreshold = 0.012; // 到着判定距離
-  const baseFriction = 0.94; // 慣性を維持する高めの摩擦
+  const baseAcceleration = 0.0012;
+  const baseMaxSpeed = 0.010;
+  const baseMaxSpeedSq = baseMaxSpeed * baseMaxSpeed;
+  const baseFriction = 0.94;
 
   // タイムアウト: 開始から8秒経過したら強制完了
   const elapsed = now - state.formationStartTime;
   const timeout = 8000;
+
+  // 共通の時間計算（ループ外で1回だけ）
+  const wobbleTimeBase = now * 0.001;
+  const wobbleTimeSlow = now * 0.003;
+  const isSmileFormation = state.formationIndex === 4;
 
   state.droneChildren.forEach((drone, index) => {
     if (!drone || !targetPositions[index]) return;
 
     const target = targetPositions[index];
     const current = drone.position;
+    const targetY = target.y || 0;
+    const targetZ = target.z || 0;
 
     // 個体パラメータ初期化
     if (!drone.userData.flightParams) {
       drone.userData.flightParams = {
-        // 各機体固有の特性
-        speedMultiplier: 0.8 + Math.random() * 0.4, // 0.8〜1.2
-        accelMultiplier: 0.8 + Math.random() * 0.4, // 0.8〜1.2
-        wobbleFreq: 2 + Math.random() * 2, // 揺れの周波数 2〜4Hz
-        wobbleAmp: 0.0008 + Math.random() * 0.001, // 揺れの振幅
-        wobblePhase: Math.random() * Math.PI * 2, // 揺れの位相
-        driftX: (Math.random() - 0.5) * 0.0001, // 微妙なドリフト
+        speedMultiplier: 0.8 + Math.random() * 0.4,
+        accelMultiplier: 0.8 + Math.random() * 0.4,
+        wobbleFreq: 2 + Math.random() * 2,
+        wobbleAmp: 0.0008 + Math.random() * 0.001,
+        wobblePhase: Math.random() * Math.PI * 2,
+        driftX: (Math.random() - 0.5) * 0.0001,
         driftZ: (Math.random() - 0.5) * 0.0001,
-        hasArrived: false, // 到着フラグ
+        hasArrived: false,
       };
     }
     const params = drone.userData.flightParams;
@@ -528,9 +484,7 @@ function updateFormationAnimation() {
     // タイムラグ
     if (elapsed < reactionDelay) {
       allReached = false;
-      // 待機中もホバリング
-      const wobble = Math.sin(now * 0.003 * params.wobbleFreq + params.wobblePhase) * params.wobbleAmp * 0.3;
-      current.y += wobble;
+      current.y += Math.sin(wobbleTimeSlow * params.wobbleFreq + params.wobblePhase) * params.wobbleAmp * 0.3;
       return;
     }
 
@@ -539,87 +493,67 @@ function updateFormationAnimation() {
       params.hasArrived = true;
       drone.userData.velocity = { x: 0, y: 0, z: 0 };
       current.x = target.x;
-      current.y = target.y || 0;
-      current.z = target.z || 0;
+      current.y = targetY;
+      current.z = targetZ;
       return;
     }
 
     // 既に到着済みの場合はホバリングのみ
     if (params.hasArrived) {
-      const wobbleTime = now * 0.001;
-      const wobbleX = Math.sin(wobbleTime * params.wobbleFreq + params.wobblePhase) * params.wobbleAmp;
-      const wobbleY = Math.sin(wobbleTime * params.wobbleFreq * 1.3 + params.wobblePhase + 1) * params.wobbleAmp * 0.5;
-      const wobbleZ = Math.cos(wobbleTime * params.wobbleFreq * 0.8 + params.wobblePhase) * params.wobbleAmp;
-
-      current.x = target.x + wobbleX;
-      current.y = (target.y || 0) + wobbleY;
-      current.z = (target.z || 0) + wobbleZ;
-
-      // (^_^)フォーメーションの場合はドローンを立てる
-      if (state.formationIndex === 4) {
-        drone.rotation.x = -Math.PI / 2;
-      } else {
-        drone.rotation.x = 0;
-      }
+      const wobblePhase = wobbleTimeBase * params.wobbleFreq + params.wobblePhase;
+      current.x = target.x + Math.sin(wobblePhase) * params.wobbleAmp;
+      current.y = targetY + Math.sin(wobblePhase * 1.3 + 1) * params.wobbleAmp * 0.5;
+      current.z = targetZ + Math.cos(wobblePhase * 0.8) * params.wobbleAmp;
+      drone.rotation.x = isSmileFormation ? -Math.PI / 2 : 0;
       return;
     }
 
     // 目標への差分
     const dx = target.x - current.x;
-    const dy = (target.y || 0) - current.y;
-    const dz = (target.z || 0) - current.z;
-    const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    const dy = targetY - current.y;
+    const dz = targetZ - current.z;
+    const distanceSq = dx * dx + dy * dy + dz * dz;
 
-    // 到着判定
-    if (distance < arrivalThreshold) {
+    // 到着判定（二乗で比較してsqrt省略）
+    if (distanceSq < ARRIVAL_THRESHOLD_SQ) {
       params.hasArrived = true;
       drone.userData.velocity = { x: 0, y: 0, z: 0 };
       current.x = target.x;
-      current.y = target.y || 0;
-      current.z = target.z || 0;
-
-      // (^_^)フォーメーションの場合はドローンを立てる
-      if (state.formationIndex === 4) {
-        drone.rotation.x = -Math.PI / 2;
-      } else {
-        drone.rotation.x = 0;
-      }
+      current.y = targetY;
+      current.z = targetZ;
+      drone.rotation.x = isSmileFormation ? -Math.PI / 2 : 0;
     } else {
       allReached = false;
 
-      // 慣性を考慮した加速度（重いほど加速しにくい）
+      // 慣性を考慮した加速度
       const accel = baseAcceleration * params.accelMultiplier / inertia;
 
-      // 目標方向への加速
-      if (distance > 0.001) {
-        vel.x += (dx / distance) * accel;
-        vel.y += (dy / distance) * accel;
-        vel.z += (dz / distance) * accel;
+      // 目標方向への加速（sqrtは必要な時だけ）
+      if (distanceSq > MIN_DISTANCE_SQ) {
+        const invDistance = 1 / Math.sqrt(distanceSq);
+        vel.x += dx * invDistance * accel;
+        vel.y += dy * invDistance * accel;
+        vel.z += dz * invDistance * accel;
       }
 
-      // 微妙なドリフト（風の影響）
+      // ドリフトと揺れ
       vel.x += params.driftX;
       vel.z += params.driftZ;
+      vel.y += Math.sin(wobbleTimeBase * params.wobbleFreq + params.wobblePhase) * params.wobbleAmp * 0.2;
 
-      // 飛行中の揺れ
-      const wobbleTime = now * 0.001;
-      const flyingWobble = Math.sin(wobbleTime * params.wobbleFreq + params.wobblePhase) * params.wobbleAmp * 0.2;
-      vel.y += flyingWobble;
-
-      // 速度制限（慣性が大きいほど最高速度が高い）
-      const maxSpeed = baseMaxSpeed * params.speedMultiplier * (0.9 + inertia * 0.2);
-      const speed = Math.sqrt(vel.x * vel.x + vel.y * vel.y + vel.z * vel.z);
-      if (speed > maxSpeed) {
-        const scale = maxSpeed / speed;
+      // 速度制限（二乗で比較）
+      const maxSpeedSq = baseMaxSpeedSq * params.speedMultiplier * params.speedMultiplier * (0.9 + inertia * 0.2) * (0.9 + inertia * 0.2);
+      const speedSq = vel.x * vel.x + vel.y * vel.y + vel.z * vel.z;
+      if (speedSq > maxSpeedSq) {
+        const scale = Math.sqrt(maxSpeedSq / speedSq);
         vel.x *= scale;
         vel.y *= scale;
         vel.z *= scale;
       }
 
-      // 摩擦（慣性が大きいほど摩擦が小さい = 止まりにくい）
+      // 摩擦
       let friction = baseFriction + (inertia - 1.0) * 0.02;
-      // 近づくと減速
-      if (distance < 0.04) {
+      if (distanceSq < CLOSE_THRESHOLD_SQ) {
         friction = Math.max(0.88, friction - 0.04);
       }
       friction = Math.max(0.88, Math.min(0.96, friction));
@@ -628,7 +562,6 @@ function updateFormationAnimation() {
       vel.y *= friction;
       vel.z *= friction;
 
-      // 位置更新
       current.x += vel.x;
       current.y += vel.y;
       current.z += vel.z;
@@ -691,18 +624,26 @@ function updateFormationAnimationX() {
   // 基本物理パラメータ
   const baseAcceleration = 0.0012;
   const baseMaxSpeed = 0.010;
-  const arrivalThreshold = 0.012;
+  const baseMaxSpeedSq = baseMaxSpeed * baseMaxSpeed;
   const baseFriction = 0.94;
 
   // タイムアウト: 8秒
   const elapsed = now - state.formationStartTimeX;
   const timeout = 8000;
 
+  // 共通の時間計算（ループ外で1回だけ）
+  const wobbleTimeBase = now * 0.001;
+  const wobbleTimeSlow = now * 0.003;
+  const isVerticalFormation = state.formationIndexX === 1 || state.formationIndexX === 3;
+  const targetRotX = isVerticalFormation ? -Math.PI / 2 : 0;
+
   state.droneChildren.forEach((drone, index) => {
     if (!drone || !targetPositions[index]) return;
 
     const target = targetPositions[index];
     const current = drone.position;
+    const targetY = target.y || 0;
+    const targetZ = target.z || 0;
 
     // 個体パラメータ初期化
     if (!drone.userData.flightParams) {
@@ -726,8 +667,7 @@ function updateFormationAnimationX() {
     // タイムラグ
     if (elapsed < reactionDelay) {
       allReached = false;
-      const wobble = Math.sin(now * 0.003 * params.wobbleFreq + params.wobblePhase) * params.wobbleAmp * 0.3;
-      current.y += wobble;
+      current.y += Math.sin(wobbleTimeSlow * params.wobbleFreq + params.wobblePhase) * params.wobbleAmp * 0.3;
       return;
     }
 
@@ -745,74 +685,57 @@ function updateFormationAnimationX() {
     // 到着済みの場合はアニメーション付きホバリング
     if (params.hasArrived) {
       const animatedTarget = getAnimatedPositionX(target, index, animTime);
-      const wobbleTime = now * 0.001;
-      const wobbleX = Math.sin(wobbleTime * params.wobbleFreq + params.wobblePhase) * params.wobbleAmp;
-      const wobbleY = Math.sin(wobbleTime * params.wobbleFreq * 1.3 + params.wobblePhase + 1) * params.wobbleAmp * 0.5;
-      const wobbleZ = Math.cos(wobbleTime * params.wobbleFreq * 0.8 + params.wobblePhase) * params.wobbleAmp;
-
-      current.x = animatedTarget.x + wobbleX;
-      current.y = animatedTarget.y + wobbleY;
-      current.z = animatedTarget.z + wobbleZ;
-
-      // 猫(1)と泣き顔(3)はドローンを縦にする
-      if (state.formationIndexX === 1 || state.formationIndexX === 3) {
-        drone.rotation.x = -Math.PI / 2;
-      } else {
-        drone.rotation.x = 0;
-      }
+      const wobblePhase = wobbleTimeBase * params.wobbleFreq + params.wobblePhase;
+      current.x = animatedTarget.x + Math.sin(wobblePhase) * params.wobbleAmp;
+      current.y = animatedTarget.y + Math.sin(wobblePhase * 1.3 + 1) * params.wobbleAmp * 0.5;
+      current.z = animatedTarget.z + Math.cos(wobblePhase * 0.8) * params.wobbleAmp;
+      drone.rotation.x = targetRotX;
       return;
     }
 
     // 目標への差分
     const dx = target.x - current.x;
-    const dy = (target.y || 0) - current.y;
-    const dz = (target.z || 0) - current.z;
-    const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    const dy = targetY - current.y;
+    const dz = targetZ - current.z;
+    const distanceSq = dx * dx + dy * dy + dz * dz;
 
-    // 到着判定
-    if (distance < arrivalThreshold) {
+    // 到着判定（二乗で比較）
+    if (distanceSq < ARRIVAL_THRESHOLD_SQ) {
       params.hasArrived = true;
       drone.userData.velocity = { x: 0, y: 0, z: 0 };
       const animatedTarget = getAnimatedPositionX(target, index, animTime);
       current.x = animatedTarget.x;
       current.y = animatedTarget.y;
       current.z = animatedTarget.z;
-
-      // 猫(1)と泣き顔(3)はドローンを縦にする
-      if (state.formationIndexX === 1 || state.formationIndexX === 3) {
-        drone.rotation.x = -Math.PI / 2;
-      } else {
-        drone.rotation.x = 0;
-      }
+      drone.rotation.x = targetRotX;
     } else {
       allReached = false;
 
       const accel = baseAcceleration * params.accelMultiplier / inertia;
 
-      if (distance > 0.001) {
-        vel.x += (dx / distance) * accel;
-        vel.y += (dy / distance) * accel;
-        vel.z += (dz / distance) * accel;
+      if (distanceSq > MIN_DISTANCE_SQ) {
+        const invDistance = 1 / Math.sqrt(distanceSq);
+        vel.x += dx * invDistance * accel;
+        vel.y += dy * invDistance * accel;
+        vel.z += dz * invDistance * accel;
       }
 
       vel.x += params.driftX;
       vel.z += params.driftZ;
+      vel.y += Math.sin(wobbleTimeBase * params.wobbleFreq + params.wobblePhase) * params.wobbleAmp * 0.2;
 
-      const wobbleTime = now * 0.001;
-      const flyingWobble = Math.sin(wobbleTime * params.wobbleFreq + params.wobblePhase) * params.wobbleAmp * 0.2;
-      vel.y += flyingWobble;
-
-      const maxSpeed = baseMaxSpeed * params.speedMultiplier * (0.9 + inertia * 0.2);
-      const speed = Math.sqrt(vel.x * vel.x + vel.y * vel.y + vel.z * vel.z);
-      if (speed > maxSpeed) {
-        const scale = maxSpeed / speed;
+      // 速度制限（二乗で比較）
+      const maxSpeedSq = baseMaxSpeedSq * params.speedMultiplier * params.speedMultiplier * (0.9 + inertia * 0.2) * (0.9 + inertia * 0.2);
+      const speedSq = vel.x * vel.x + vel.y * vel.y + vel.z * vel.z;
+      if (speedSq > maxSpeedSq) {
+        const scale = Math.sqrt(maxSpeedSq / speedSq);
         vel.x *= scale;
         vel.y *= scale;
         vel.z *= scale;
       }
 
       let friction = baseFriction + (inertia - 1.0) * 0.02;
-      if (distance < 0.04) {
+      if (distanceSq < CLOSE_THRESHOLD_SQ) {
         friction = Math.max(0.88, friction - 0.04);
       }
       friction = Math.max(0.88, Math.min(0.96, friction));
@@ -825,8 +748,7 @@ function updateFormationAnimationX() {
       current.y += vel.y;
       current.z += vel.z;
 
-      // 猫(1)と泣き顔(3)は移動中も徐々に回転
-      const targetRotX = (state.formationIndexX === 1 || state.formationIndexX === 3) ? -Math.PI / 2 : 0;
+      // 移動中も徐々に回転
       drone.rotation.x += (targetRotX - drone.rotation.x) * 0.05;
 
       drone.userData.velocity = vel;
@@ -1136,9 +1058,6 @@ async function startXR() {
 
     await state.renderer.xr.setSession(xrSession);
 
-    // MR用の影設定を作成
-    createMRShadow();
-
     // ドローンモデルの読み込み（XRセッション開始時に行う）
     if (!state.drone) {
       loadDroneModel();
@@ -1200,9 +1119,6 @@ async function startXR() {
       state.setWasFpvMode(false);
       state.setFpvInitialCameraPos(null);
       state.setFpvInitialDronePos(null);
-
-      // MR用の影設定を削除
-      removeMRShadow();
 
       if (state.droneSound && state.droneSound.isPlaying) {
         state.droneSound.stop();
