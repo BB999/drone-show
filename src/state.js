@@ -205,6 +205,9 @@ export let isGrabbedByHand = false;
 export let grabbingController = null;
 export let grabbingInputSource = null;
 export let grabbingHand = null;
+export let grabbedDrone = null;
+export let grabbedDroneOriginalPosition = new THREE.Vector3();
+export let grabbedDroneOriginalQuaternion = new THREE.Quaternion();
 export let grabOffset = new THREE.Vector3();
 export let grabRotationOffset = new THREE.Quaternion();
 export let rightGripPressed = false;
@@ -230,6 +233,16 @@ export let returnTargetRotation = new THREE.Quaternion();
 export let returnProgress = 0;
 export const returnDuration = 1.0;
 export const returnSpeed = 1.0 / returnDuration;
+
+// 子ドローン戻りアニメーション用
+export let returningDrone = null;
+export let returningDroneStartPosition = new THREE.Vector3();
+export let returningDroneStartQuaternion = new THREE.Quaternion();
+export let returningDroneTargetPosition = new THREE.Vector3();
+export let returningDroneTargetQuaternion = new THREE.Quaternion();
+export let returningDroneProgress = 0;
+export function setReturningDrone(value) { returningDrone = value; }
+export function setReturningDroneProgress(value) { returningDroneProgress = value; }
 
 // 物理演算用パラメータ
 export let velocity = new THREE.Vector3(0, 0, 0);
@@ -395,6 +408,7 @@ export function setIsGrabbedByHand(value) { isGrabbedByHand = value; }
 export function setGrabbingController(value) { grabbingController = value; }
 export function setGrabbingInputSource(value) { grabbingInputSource = value; }
 export function setGrabbingHand(value) { grabbingHand = value; }
+export function setGrabbedDrone(value) { grabbedDrone = value; }
 export function setGrabOffset(value) { grabOffset = value; }
 export function setGrabRotationOffset(value) { grabRotationOffset = value; }
 export function setRightGripPressed(value) { rightGripPressed = value; }

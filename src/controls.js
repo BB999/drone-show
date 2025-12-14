@@ -498,15 +498,34 @@ function handleControllerRelease() {
   }
 }
 
-// ハンドトラッキングでドローンを掴む処理
+// ハンドトラッキングでドローンを掴む処理（50機個別対応）
+// パフォーマンス最適化: 再利用オブジェクト
+const _handIndexPos = new THREE.Vector3();
+const _handThumbPos = new THREE.Vector3();
+const _handCenter = new THREE.Vector3();
+const _droneWorldPos = new THREE.Vector3();
+const _handQuat = new THREE.Quaternion();
+const _droneQuat = new THREE.Quaternion();
+
+// 前フレームのピンチ状態を追跡（つまんだ状態で近づいても反応しないように）
+let _wasPinchingHand1 = false;
+let _wasPinchingHand2 = false;
+
 export function handleHandGrab() {
-  if (!state.xrSession || !state.drone || !state.dronePositioned) return;
+  if (!state.xrSession || !state.dronePositioned) return;
   if (state.isGrabbedByController || state.bothGripsPressed || state.isStartingUp || state.isShuttingDown) return;
 
   const frame = state.renderer.xr.getFrame();
   if (!frame) return;
 
   const hands = [state.hand1, state.hand2];
+
+  // 全ドローンリスト（メインドローン + 子ドローン）
+  const allDrones = [];
+  if (state.drone) allDrones.push(state.drone);
+  if (state.droneChildren && state.droneChildren.length > 0) {
+    allDrones.push(...state.droneChildren);
+  }
 
   for (let i = 0; i < hands.length; i++) {
     const hand = hands[i];
@@ -516,82 +535,139 @@ export function handleHandGrab() {
     const thumbTip = hand.joints['thumb-tip'];
 
     if (indexTip && thumbTip) {
-      const indexPos = new THREE.Vector3();
-      const thumbPos = new THREE.Vector3();
-      indexTip.getWorldPosition(indexPos);
-      thumbTip.getWorldPosition(thumbPos);
+      indexTip.getWorldPosition(_handIndexPos);
+      thumbTip.getWorldPosition(_handThumbPos);
 
-      const pinchDistance = indexPos.distanceTo(thumbPos);
+      const pinchDistance = _handIndexPos.distanceTo(_handThumbPos);
       const isPinching = pinchDistance < 0.025;
 
-      const dronePos = new THREE.Vector3();
-      state.drone.getWorldPosition(dronePos);
+      // 前フレームのピンチ状態を取得・更新
+      const wasPinching = i === 0 ? _wasPinchingHand1 : _wasPinchingHand2;
+      if (i === 0) {
+        _wasPinchingHand1 = isPinching;
+      } else {
+        _wasPinchingHand2 = isPinching;
+      }
 
-      const handCenter = new THREE.Vector3().addVectors(indexPos, thumbPos).multiplyScalar(0.5);
-      const distanceToDrone = handCenter.distanceTo(dronePos);
+      // ピンチ開始（立ち上がりエッジ）を検出
+      const justStartedPinching = isPinching && !wasPinching;
 
-      if (isPinching && !state.isGrabbedByHand && distanceToDrone < 0.08) {
-        state.setIsGrabbedByHand(true);
-        state.setGrabbingHand(hand);
-        state.setHasLanded(false);
+      _handCenter.addVectors(_handIndexPos, _handThumbPos).multiplyScalar(0.5);
 
-        state.grabOffset.copy(dronePos).sub(handCenter);
-        state.smoothedHandPosition.copy(handCenter);
+      // ピンチ開始時のみドローンを掴む（つまんだ状態で近づいても反応しない）
+      if (justStartedPinching && !state.isGrabbedByHand) {
+        let closestDrone = null;
+        let closestDistance = 0.08; // 掴める最大距離
 
-        const wrist = hand.joints['wrist'];
-        if (wrist) {
-          const wristQuat = new THREE.Quaternion();
-          wrist.getWorldQuaternion(wristQuat);
-          const droneQuat = new THREE.Quaternion();
-          state.drone.getWorldQuaternion(droneQuat);
-          state.grabRotationOffset.copy(wristQuat).invert().multiply(droneQuat);
-          state.smoothedHandRotation.copy(wristQuat);
-        } else {
-          const handQuat = new THREE.Quaternion();
-          hand.getWorldQuaternion(handQuat);
-          const droneQuat = new THREE.Quaternion();
-          state.drone.getWorldQuaternion(droneQuat);
-          state.grabRotationOffset.copy(handQuat).invert().multiply(droneQuat);
-          state.smoothedHandRotation.copy(handQuat);
+        for (const drone of allDrones) {
+          if (!drone) continue;
+          drone.getWorldPosition(_droneWorldPos);
+          const dist = _handCenter.distanceTo(_droneWorldPos);
+          if (dist < closestDistance) {
+            closestDistance = dist;
+            closestDrone = drone;
+          }
         }
 
-        updateInfo('手でドローンを掴んだ (距離: ' + (distanceToDrone * 100).toFixed(1) + 'cm)');
-        console.log('手でドローンを掴んだ 距離:', distanceToDrone);
+        if (closestDrone) {
+          state.setIsGrabbedByHand(true);
+          state.setGrabbingHand(hand);
+          state.setGrabbedDrone(closestDrone);
+          state.setHasLanded(false);
+
+          // 元の位置と回転を保存
+          state.grabbedDroneOriginalPosition.copy(closestDrone.position);
+          state.grabbedDroneOriginalQuaternion.copy(closestDrone.quaternion);
+
+          closestDrone.getWorldPosition(_droneWorldPos);
+          state.grabOffset.copy(_droneWorldPos).sub(_handCenter);
+          state.smoothedHandPosition.copy(_handCenter);
+
+          const wrist = hand.joints['wrist'];
+          if (wrist) {
+            wrist.getWorldQuaternion(_handQuat);
+            closestDrone.getWorldQuaternion(_droneQuat);
+            state.grabRotationOffset.copy(_handQuat).invert().multiply(_droneQuat);
+            state.smoothedHandRotation.copy(_handQuat);
+          } else {
+            hand.getWorldQuaternion(_handQuat);
+            closestDrone.getWorldQuaternion(_droneQuat);
+            state.grabRotationOffset.copy(_handQuat).invert().multiply(_droneQuat);
+            state.smoothedHandRotation.copy(_handQuat);
+          }
+
+          const isMainDrone = closestDrone === state.drone;
+          const droneIndex = isMainDrone ? 0 : state.droneChildren.indexOf(closestDrone) + 1;
+          updateInfo('ドローン #' + droneIndex + ' を掴んだ');
+          console.log('手でドローンを掴んだ #' + droneIndex + ' 距離:', closestDistance.toFixed(3));
+        }
       } else if (!isPinching && state.isGrabbedByHand && state.grabbingHand === hand) {
         handleHandRelease();
       }
 
       // 掴んでいる場合、ドローンを手に追従させる
-      if (state.isGrabbedByHand && state.grabbingHand === hand) {
-        indexTip.getWorldPosition(indexPos);
-        thumbTip.getWorldPosition(thumbPos);
-        handCenter.addVectors(indexPos, thumbPos).multiplyScalar(0.5);
+      if (state.isGrabbedByHand && state.grabbingHand === hand && state.grabbedDrone) {
+        indexTip.getWorldPosition(_handIndexPos);
+        thumbTip.getWorldPosition(_handThumbPos);
+        _handCenter.addVectors(_handIndexPos, _handThumbPos).multiplyScalar(0.5);
 
-        state.smoothedHandPosition.lerp(handCenter, state.handSmoothingFactor);
+        state.smoothedHandPosition.lerp(_handCenter, state.handSmoothingFactor);
 
-        const newPos = state.smoothedHandPosition.clone().add(state.grabOffset);
-        state.drone.position.copy(newPos);
-        if (state.drone.userData.basePosition) {
-          state.drone.userData.basePosition.copy(newPos);
+        const newWorldPos = state.smoothedHandPosition.clone().add(state.grabOffset);
+
+        // 子ドローンの場合はワールド座標をローカル座標に変換
+        const isMainDrone = state.grabbedDrone === state.drone;
+        if (isMainDrone) {
+          state.grabbedDrone.position.copy(newWorldPos);
+          if (state.grabbedDrone.userData.basePosition) {
+            state.grabbedDrone.userData.basePosition.copy(newWorldPos);
+          }
+        } else {
+          // 親（メインドローン）のワールド行列の逆行列でローカル座標に変換
+          const localPos = newWorldPos.clone();
+          if (state.drone) {
+            state.drone.updateWorldMatrix(true, false);
+            const parentInverse = new THREE.Matrix4().copy(state.drone.matrixWorld).invert();
+            localPos.applyMatrix4(parentInverse);
+          }
+          state.grabbedDrone.position.copy(localPos);
         }
 
         const wrist = hand.joints['wrist'];
         if (wrist) {
-          const wristQuat = new THREE.Quaternion();
-          wrist.getWorldQuaternion(wristQuat);
-          state.smoothedHandRotation.slerp(wristQuat, state.handSmoothingFactor);
+          wrist.getWorldQuaternion(_handQuat);
+          state.smoothedHandRotation.slerp(_handQuat, state.handSmoothingFactor);
           const targetQuat = state.smoothedHandRotation.clone().multiply(state.grabRotationOffset);
-          state.drone.quaternion.copy(targetQuat);
+          if (isMainDrone) {
+            state.grabbedDrone.quaternion.copy(targetQuat);
+          } else {
+            // 子ドローンの回転もローカルに変換
+            const parentQuatInverse = new THREE.Quaternion();
+            state.drone.getWorldQuaternion(parentQuatInverse);
+            parentQuatInverse.invert();
+            const localQuat = parentQuatInverse.multiply(targetQuat);
+            state.grabbedDrone.quaternion.copy(localQuat);
+          }
         } else {
-          const handQuat = new THREE.Quaternion();
-          hand.getWorldQuaternion(handQuat);
-          state.smoothedHandRotation.slerp(handQuat, state.handSmoothingFactor);
+          hand.getWorldQuaternion(_handQuat);
+          state.smoothedHandRotation.slerp(_handQuat, state.handSmoothingFactor);
           const targetQuat = state.smoothedHandRotation.clone().multiply(state.grabRotationOffset);
-          state.drone.quaternion.copy(targetQuat);
+          if (isMainDrone) {
+            state.grabbedDrone.quaternion.copy(targetQuat);
+          } else {
+            const parentQuatInverse = new THREE.Quaternion();
+            state.drone.getWorldQuaternion(parentQuatInverse);
+            parentQuatInverse.invert();
+            const localQuat = parentQuatInverse.multiply(targetQuat);
+            state.grabbedDrone.quaternion.copy(localQuat);
+          }
         }
 
-        state.velocity.set(0, 0, 0);
-        state.setAngularVelocity(0);
+        // メインドローンの場合のみ速度リセット
+        if (isMainDrone) {
+          state.velocity.set(0, 0, 0);
+          state.setAngularVelocity(0);
+        }
       }
     }
   }
@@ -599,28 +675,105 @@ export function handleHandGrab() {
 
 // 手を離した時の処理
 function handleHandRelease() {
-  const dt = 0.016;
-  const releaseVelocity = state.drone.position.clone().sub(state.dronePreviousPosition).divideScalar(dt);
+  const grabbedDrone = state.grabbedDrone;
+  if (!grabbedDrone) {
+    state.setIsGrabbedByHand(false);
+    state.setGrabbingHand(null);
+    state.setGrabbedDrone(null);
+    return;
+  }
+
+  const isMainDrone = grabbedDrone === state.drone;
+  const droneIndex = isMainDrone ? 0 : state.droneChildren.indexOf(grabbedDrone) + 1;
 
   state.setIsGrabbedByHand(false);
   state.setGrabbingHand(null);
+  state.setGrabbedDrone(null);
 
-  if (state.isStartupComplete) {
+  // 元の位置に戻るアニメーションを開始
+  if (isMainDrone) {
+    // メインドローン
     state.setIsReturningToHover(true);
     state.setReturnProgress(0);
-    state.returnStartPosition.copy(state.drone.position);
-    state.returnStartRotation.copy(state.drone.quaternion);
-    state.returnTargetRotation.setFromAxisAngle(new THREE.Vector3(0, 1, 0), state.drone.rotation.y);
-    updateInfo('ドローンを離した - ホバー位置に戻ります');
-    console.log('手を離した');
+    state.returnStartPosition.copy(grabbedDrone.position);
+    state.returnStartRotation.copy(grabbedDrone.quaternion);
+    // 元の位置に戻る
+    if (grabbedDrone.userData.basePosition) {
+      state.drone.userData.returnTargetPosition = grabbedDrone.userData.basePosition.clone();
+    }
+    state.returnTargetRotation.copy(state.grabbedDroneOriginalQuaternion);
   } else {
-    state.dronePhysicsVelocity.copy(releaseVelocity);
-    state.droneAngularVelocity.set(
-      (Math.random() - 0.5) * 3,
-      (Math.random() - 0.5) * 3,
-      (Math.random() - 0.5) * 3
-    );
-    updateInfo('ドローンを離した');
-    console.log('手を離した - 速度:', releaseVelocity.length().toFixed(2), 'm/s');
+    // 子ドローン - 隊列の目標位置に戻るアニメーション
+    const childIndex = state.droneChildren.indexOf(grabbedDrone);
+    if (childIndex >= 0) {
+      // 現在のフォーメーションに基づいて目標位置を取得
+      let targetPositions;
+      if (state.formationAnimating || state.formationIndex > 0) {
+        // Aボタンフォーメーション
+        switch (state.formationIndex) {
+          case 1: targetPositions = state.droneKPositions; break;
+          case 2: targetPositions = state.droneMUPositions; break;
+          case 3: targetPositions = state.droneIPositions; break;
+          case 4: targetPositions = state.droneSmilePositions; break;
+          default: targetPositions = state.droneOriginalPositions; break;
+        }
+      } else if (state.formationAnimatingX || state.formationIndexX > 0) {
+        // Xボタンフォーメーション
+        switch (state.formationIndexX) {
+          case 1: targetPositions = state.droneCatPositions; break;
+          case 2: targetPositions = state.droneMobiusPositions; break;
+          case 3: targetPositions = state.droneCryingPositions; break;
+          case 4: targetPositions = state.droneWavePositions; break;
+          default: targetPositions = state.droneOriginalPositions; break;
+        }
+      } else {
+        targetPositions = state.droneOriginalPositions;
+      }
+
+      if (targetPositions && targetPositions[childIndex]) {
+        const targetPos = targetPositions[childIndex];
+        state.setReturningDrone(grabbedDrone);
+        state.setReturningDroneProgress(0);
+        state.returningDroneStartPosition.copy(grabbedDrone.position);
+        state.returningDroneStartQuaternion.copy(grabbedDrone.quaternion);
+        state.returningDroneTargetPosition.set(targetPos.x, targetPos.y || 0, targetPos.z || 0);
+        state.returningDroneTargetQuaternion.set(0, 0, 0, 1); // 水平姿勢
+      }
+    }
   }
+
+  updateInfo('ドローン #' + droneIndex + ' を離した - 元の位置に戻ります');
+  console.log('手を離した #' + droneIndex + ' - 元の位置に戻ります');
+}
+
+// 子ドローンの戻りアニメーション更新
+export function updateReturningDrone() {
+  if (!state.returningDrone) return;
+
+  state.setReturningDroneProgress(state.returningDroneProgress + state.returnSpeed * 0.016);
+
+  if (state.returningDroneProgress >= 1.0) {
+    state.setReturningDroneProgress(1.0);
+    state.returningDrone.position.copy(state.returningDroneTargetPosition);
+    state.returningDrone.quaternion.copy(state.returningDroneTargetQuaternion);
+    state.setReturningDrone(null);
+    return;
+  }
+
+  // イージング
+  const easeProgress = 1 - Math.pow(1 - state.returningDroneProgress, 3);
+
+  // 位置の補間
+  state.returningDrone.position.lerpVectors(
+    state.returningDroneStartPosition,
+    state.returningDroneTargetPosition,
+    easeProgress
+  );
+
+  // 回転の補間
+  state.returningDrone.quaternion.slerpQuaternions(
+    state.returningDroneStartQuaternion,
+    state.returningDroneTargetQuaternion,
+    easeProgress
+  );
 }

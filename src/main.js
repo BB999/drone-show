@@ -5,17 +5,16 @@ import { loadDroneModel, updateMaxSpeed } from './drone.js';
 import { updateDroneSoundPitch } from './sound.js';
 import {
   updateAutoReturnText, updateSpeedText,
-  updateTrackingLostText, updateSequenceStatusText,
-  createTrackingLostText, removeTrackingLostText,
+  updateSequenceStatusText,
   removeSequenceStatusText,
   loadSettingsFromStorage
 } from './ui.js';
-import { checkPlaneCollision, updatePreStartupPhysics, updateHoverAnimation, updateReturnToHover } from './physics.js';
-import { processDepthInformation, updatePlanes, createDepthVisualization, positionDrone } from './vr.js';
+import { updatePreStartupPhysics, updateHoverAnimation, updateReturnToHover } from './physics.js';
+import { processDepthInformation, createDepthVisualization, positionDrone } from './vr.js';
 import {
   updateAutoReturn, handleSpeedChange, handleRightControllerButtons,
   handleStartupSequence, handleSizeChange, handleControllerGrab, handleHandGrab,
-  handleLeftControllerButtons
+  handleLeftControllerButtons, updateReturningDrone
 } from './controls.js';
 
 // シーンの初期化
@@ -75,16 +74,17 @@ function render() {
   // UI更新
   updateAutoReturnText();
   updateSpeedText();
-  updateTrackingLostText();
   updateSequenceStatusText();
 
   // XRセッション中の処理
   if (state.xrSession) {
-    const frame = state.renderer.xr.getFrame();
-    const referenceSpace = state.renderer.xr.getReferenceSpace();
-    if (frame && referenceSpace) {
-      processDepthInformation(frame, referenceSpace);
-      updatePlanes(frame, referenceSpace);
+    // 深度テクスチャ未取得時のみ処理（1回だけ）
+    if (!state.depthDataTexture) {
+      const frame = state.renderer.xr.getFrame();
+      const referenceSpace = state.renderer.xr.getReferenceSpace();
+      if (frame && referenceSpace) {
+        processDepthInformation(frame, referenceSpace);
+      }
     }
 
     // 深度視覚化メッシュの作成と更新
@@ -93,42 +93,6 @@ function render() {
     }
     if (state.depthMesh) {
       state.depthMesh.visible = state.showDepthVisualization;
-    }
-
-    // コントローラーのトラッキング状態を監視
-    const inputSources = state.xrSession.inputSources;
-    let leftFound = false;
-    let rightFound = false;
-
-    if (frame && referenceSpace) {
-      for (const source of inputSources) {
-        if (source.handedness === 'left' && source.gripSpace) {
-          // 実際にポーズが取得できるかチェック
-          const pose = frame.getPose(source.gripSpace, referenceSpace);
-          if (pose) {
-            leftFound = true;
-          }
-        } else if (source.handedness === 'right' && source.gripSpace) {
-          const pose = frame.getPose(source.gripSpace, referenceSpace);
-          if (pose) {
-            rightFound = true;
-          }
-        }
-      }
-    }
-
-    const prevLeftTracked = state.isLeftControllerTracked;
-    const prevRightTracked = state.isRightControllerTracked;
-
-    state.setIsLeftControllerTracked(leftFound);
-    state.setIsRightControllerTracked(rightFound);
-
-    if (prevLeftTracked !== state.isLeftControllerTracked || prevRightTracked !== state.isRightControllerTracked) {
-      if (!state.isLeftControllerTracked || !state.isRightControllerTracked) {
-        createTrackingLostText();
-      } else {
-        removeTrackingLostText();
-      }
     }
   }
 
@@ -146,6 +110,7 @@ function render() {
 
   // 物理演算とアニメーション
   updateReturnToHover();
+  updateReturningDrone();
   updateLiftSequence();
   updatePreStartupPhysics();
   updateHoverAnimation();
@@ -183,10 +148,6 @@ function render() {
     state.dronePreviousPosition.copy(state.drone.position);
   }
 
-  // FPVモードのカメラオフセット更新
-  updateFpvCamera();
-
-  // VRモード時の影用ライト位置をドローンに追従
   state.renderer.render(state.scene, state.camera);
 }
 
@@ -1012,11 +973,6 @@ function updateGamepadMovement() {
   }
   state.drone.userData.physicsTilt.x += (targetTiltX - state.drone.userData.physicsTilt.x) * state.tiltSmoothing;
   state.drone.userData.physicsTilt.z += (targetTiltZ - state.drone.userData.physicsTilt.z) * state.tiltSmoothing;
-
-  // 平面との衝突判定
-  if (state.isCollisionEnabled) {
-    checkPlaneCollision();
-  }
 }
 
 function onWindowResize() {
@@ -1048,8 +1004,8 @@ async function startXR() {
       requiredFeatures: [],
       optionalFeatures: ['local-floor', 'bounded-floor', 'depth-sensing', 'plane-detection', 'hand-tracking'],
       depthSensing: {
-        usagePreference: ['cpu-optimized', 'gpu-optimized'],
-        dataFormatPreference: ['luminance-alpha', 'float32']
+        usagePreference: ['gpu-optimized'],
+        dataFormatPreference: ['luminance-alpha']
       }
     });
 
