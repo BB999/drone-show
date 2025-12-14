@@ -1,0 +1,18 @@
+{
+  "name": "drone-copter-mr",
+  "version": "1.0.0",
+  "description": "MR Drone Display App",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "three": "^0.170.0"
+  },
+  "devDependencies": {
+    "vite": "^5.4.11",
+    "vite-plugin-pwa": "^1.2.0"
+  }
+}

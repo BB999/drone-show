@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>Drone Show</title>
+
+  <meta name="description" content="MR Drone Show for Quest 3 / Quest Pro">
+  <meta name="theme-color" content="#ffffff">
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Rajdhani:wght@300;400;500;700&display=swap" rel="stylesheet">
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      font-family: 'Rajdhani', system-ui, -apple-system, sans-serif;
+      background: linear-gradient(180deg, #e8f4fc 0%, #ffffff 50%, #f0f8ff 100%);
+    }
+
+    #app {
+      width: 100%;
+      height: 100%;
+    }
+
+    #landing-page {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 2000;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: linear-gradient(180deg, #e8f4fc 0%, #ffffff 50%, #f0f8ff 100%);
+      overflow: hidden;
+    }
+
+    #drone-canvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+    }
+
+    .content-wrapper {
+      position: relative;
+      z-index: 10;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    .main-title {
+      font-family: 'Orbitron', sans-serif;
+      font-size: clamp(3rem, 10vw, 6rem);
+      font-weight: 900;
+      color: transparent;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      position: relative;
+      visibility: hidden;
+    }
+
+    .subtitle {
+      font-family: 'Rajdhani', sans-serif;
+      font-size: clamp(1rem, 3vw, 1.5rem);
+      color: rgba(80, 80, 80, 0.9);
+      letter-spacing: 0.3em;
+      margin-top: 80px;
+    }
+
+    .action-btn {
+      margin-top: 30px;
+      padding: 18px 60px;
+      font-family: 'Orbitron', sans-serif;
+      font-size: 1.2rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      border: 2px solid rgba(80, 80, 80, 0.6);
+      border-radius: 50px;
+      cursor: pointer;
+      background: rgba(255, 255, 255, 0.9);
+      color: #333;
+      position: relative;
+      transition: all 0.3s ease;
+      box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+    }
+
+    .action-btn:hover {
+      transform: scale(1.05);
+      background: rgba(50, 50, 50, 0.9);
+      color: #fff;
+      box-shadow: 0 6px 20px rgba(0, 0, 0, 0.2);
+    }
+
+    #start-button {
+      display: none !important;
+    }
+
+    #info {
+      display: none;
+    }
+
+    #depth-toggle {
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+
+  <div id="landing-page">
+    <canvas id="drone-canvas"></canvas>
+    <div class="content-wrapper">
+      <h1 class="main-title" id="title-text">Drone Show</h1>
+      <p class="subtitle">MR Experience</p>
+      <button class="action-btn" id="landing-mr-btn">START</button>
+    </div>
+  </div>
+
+  <button id="start-button">MR START</button>
+  <button id="depth-toggle">深度表示 OFF</button>
+  <div id="info"></div>
+
+  <script type="module">
+    // ドローンパーティクルシステム
+    const canvas = document.getElementById('drone-canvas');
+    const ctx = canvas.getContext('2d');
+
+    let drones = [];
+    let targetPoints = [];
+    const droneCount = 1000;
+    let animationStartTime = null;
+    const gatherDuration = 4000; // 4秒かけて集まる
+
+    function resizeCanvas() {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+      generateTargetPoints();
+    }
+
+    function generateTargetPoints() {
+      targetPoints = [];
+
+      // 画面中央にテキストを配置
+      const centerX = canvas.width / 2;
+      const centerY = canvas.height / 2 - 50;
+      const fontSize = Math.min(canvas.width / 5, 150);
+
+      const tempCanvas = document.createElement('canvas');
+      const tempCtx = tempCanvas.getContext('2d');
+      tempCanvas.width = canvas.width;
+      tempCanvas.height = canvas.height;
+
+      tempCtx.font = `900 ${fontSize}px Orbitron`;
+      tempCtx.fillStyle = '#000';
+      tempCtx.textAlign = 'center';
+      tempCtx.textBaseline = 'middle';
+      tempCtx.fillText('Drone Show', centerX, centerY);
+
+      const imageData = tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
+      const data = imageData.data;
+
+      // ドローン数に応じてステップサイズを計算して均等にサンプリング
+      // まず全ポイント数をカウント
+      let totalPoints = 0;
+      for (let y = 0; y < tempCanvas.height; y += 2) {
+        for (let x = 0; x < tempCanvas.width; x += 2) {
+          const i = (y * tempCanvas.width + x) * 4;
+          if (data[i + 3] > 128) {
+            totalPoints++;
+          }
+        }
+      }
+
+      // 適切なステップサイズを計算
+      const targetCount = Math.min(droneCount, totalPoints);
+      const ratio = Math.sqrt(totalPoints / targetCount);
+      const step = Math.max(2, Math.round(2 * ratio));
+
+      // 均等にサンプリング
+      for (let y = 0; y < tempCanvas.height; y += step) {
+        for (let x = 0; x < tempCanvas.width; x += step) {
+          const i = (y * tempCanvas.width + x) * 4;
+          if (data[i + 3] > 128) {
+            targetPoints.push({ x, y });
+          }
+        }
+      }
+      console.log('Generated target points:', targetPoints.length, 'step:', step);
+    }
+
+    function initDrones() {
+      drones = [];
+      animationStartTime = Date.now();
+
+      // ターゲットポイントがない場合は何もしない
+      if (targetPoints.length === 0) {
+        console.log('No target points found');
+        return;
+      }
+
+      // ドローン数をターゲットポイント数に合わせる（最大droneCount）
+      const actualDroneCount = Math.min(droneCount, targetPoints.length);
+      console.log('Target points:', targetPoints.length, 'Drones:', actualDroneCount);
+
+      for (let i = 0; i < actualDroneCount; i++) {
+        // 画面の外側や端からスタート
+        let startX, startY;
+        const side = Math.floor(Math.random() * 4);
+        switch (side) {
+          case 0: // 上
+            startX = Math.random() * canvas.width;
+            startY = -50 - Math.random() * 100;
+            break;
+          case 1: // 右
+            startX = canvas.width + 50 + Math.random() * 100;
+            startY = Math.random() * canvas.height;
+            break;
+          case 2: // 下
+            startX = Math.random() * canvas.width;
+            startY = canvas.height + 50 + Math.random() * 100;
+            break;
+          case 3: // 左
+            startX = -50 - Math.random() * 100;
+            startY = Math.random() * canvas.height;
+            break;
+        }
+
+        drones.push({
+          x: startX,
+          y: startY,
+          startX: startX,
+          startY: startY,
+          vx: 0,
+          vy: 0,
+          targetIndex: i,
+          size: 2.5 + Math.random() * 1.5,
+          brightness: 0.5 + Math.random() * 0.5,
+          blinkOffset: Math.random() * Math.PI * 2,
+          delay: Math.random() * 1500, // 各ドローンの出発遅延
+          speed: 0.8 + Math.random() * 0.4
+        });
+      }
+    }
+
+    function updateDrones() {
+      if (!animationStartTime || targetPoints.length === 0) return;
+
+      const elapsed = Date.now() - animationStartTime;
+
+      drones.forEach((drone, i) => {
+        const droneElapsed = Math.max(0, elapsed - drone.delay);
+        const progress = Math.min(droneElapsed / gatherDuration, 1);
+
+        // イージング関数（徐々に減速）
+        const easeProgress = 1 - Math.pow(1 - progress, 3);
+
+        const target = targetPoints[drone.targetIndex];
+        if (!target) return;
+
+        if (progress < 1) {
+          // 集まっている途中
+          drone.x = drone.startX + (target.x - drone.startX) * easeProgress;
+          drone.y = drone.startY + (target.y - drone.startY) * easeProgress;
+        } else {
+          // 集まった後はほぼ静止（微細な揺れのみ）
+          const time = Date.now() * 0.001;
+          const wobbleX = Math.sin(time * 1.5 + drone.blinkOffset) * 0.3;
+          const wobbleY = Math.cos(time * 1.2 + drone.blinkOffset) * 0.3;
+          drone.x = target.x + wobbleX;
+          drone.y = target.y + wobbleY;
+        }
+      });
+    }
+
+    function drawDrones() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      const time = Date.now() * 0.003;
+
+      drones.forEach(drone => {
+        const alpha = drone.brightness;
+
+        ctx.save();
+        ctx.translate(drone.x, drone.y);
+
+        // 中心の光
+        const gradient = ctx.createRadialGradient(0, 0, 0, 0, 0, drone.size * 2);
+        gradient.addColorStop(0, `rgba(60, 60, 60, ${alpha})`);
+        gradient.addColorStop(0.5, `rgba(100, 100, 100, ${alpha * 0.5})`);
+        gradient.addColorStop(1, 'rgba(150, 150, 150, 0)');
+
+        ctx.fillStyle = gradient;
+        ctx.beginPath();
+        ctx.arc(0, 0, drone.size * 2, 0, Math.PI * 2);
+        ctx.fill();
+
+        // ドローンの形（4つのプロペラ）
+        ctx.fillStyle = `rgba(40, 40, 40, ${alpha})`;
+        const armLength = drone.size * 1.2;
+        const rotationAngle = time * 3 + drone.blinkOffset;
+
+        for (let j = 0; j < 4; j++) {
+          const angle = (j * Math.PI / 2) + rotationAngle;
+          const px = Math.cos(angle) * armLength;
+          const py = Math.sin(angle) * armLength;
+          ctx.beginPath();
+          ctx.arc(px, py, drone.size * 0.35, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        // 中心点
+        ctx.fillStyle = `rgba(30, 30, 30, ${alpha})`;
+        ctx.beginPath();
+        ctx.arc(0, 0, drone.size * 0.25, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.restore();
+      });
+    }
+
+    function animate() {
+      updateDrones();
+      drawDrones();
+      requestAnimationFrame(animate);
+    }
+
+    window.addEventListener('resize', () => {
+      resizeCanvas();
+      initDrones();
+    });
+
+    // フォント読み込みを待ってから初期化
+    async function init() {
+      // Orbitronフォントの読み込みを待つ
+      try {
+        await document.fonts.load('900 80px Orbitron');
+        console.log('Font loaded');
+      } catch (e) {
+        console.log('Font load error, using fallback');
+      }
+
+      resizeCanvas();
+      generateTargetPoints();
+      initDrones();
+      animate();
+    }
+
+    // ページ読み込み完了後に初期化
+    if (document.readyState === 'complete') {
+      init();
+    } else {
+      window.addEventListener('load', init);
+    }
+
+    document.getElementById('landing-mr-btn').addEventListener('click', function() {
+      document.getElementById('landing-page').style.display = 'none';
+      document.getElementById('start-button').click();
+    });
+  </script>
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
