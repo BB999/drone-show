@@ -115,7 +115,6 @@ function render() {
   updatePreStartupPhysics();
   updateHoverAnimation();
   updateFormationAnimation();    // Aボタン用（K → MU → I → (^_^)）
-  updateFormationAnimationX();   // Xボタン用（猫 → メビウス → 泣き顔 → 波）
   logFormationState();
 
   // コントローラー入力処理
@@ -286,6 +285,18 @@ function updateDecelerationSequence() {
   const decelerationDuration = 2000;
   const progress = Math.min(elapsed / decelerationDuration, 1.0);
 
+  // 親ドローンと子ドローンを徐々に水平に戻す
+  if (state.drone) {
+    state.drone.rotation.x += (0 - state.drone.rotation.x) * 0.15;
+    state.drone.rotation.z += (0 - state.drone.rotation.z) * 0.15;
+  }
+  state.droneChildren.forEach((child) => {
+    if (child) {
+      child.rotation.x += (0 - child.rotation.x) * 0.15;
+      child.rotation.z += (0 - child.rotation.z) * 0.15;
+    }
+  });
+
   state.setPropellerSpeedMultiplier(1.0 - progress);
   console.log('減速中 - progress:', progress.toFixed(2), 'propellerSpeed:', state.propellerSpeedMultiplier.toFixed(2));
 
@@ -314,73 +325,21 @@ function updateDecelerationSequence() {
     }
 
     console.log('終了シーケンス完了');
-    updateInfo('ドローン停止 - Xボタンで再起動');
+    updateInfo('ドローン停止');
     removeSequenceStatusText();
   }
 }
 
-// Aボタン用フォーメーション（K → MU → I → (^_^)）の位置配列を取得
+// Aボタン用フォーメーション（K）の位置配列を取得
 function getTargetPositionsA() {
   switch (state.formationIndex) {
     case 1: return state.droneKPositions;
-    case 2: return state.droneMUPositions;
-    case 3: return state.droneIPositions;
-    case 4: return state.droneSmilePositions;
     default: return state.droneOriginalPositions;
   }
 }
 
-// Xボタン用フォーメーション（猫 → メビウス → 泣き顔 → 波）の位置配列を取得
-function getTargetPositionsX() {
-  switch (state.formationIndexX) {
-    case 1: return state.droneCatPositions;
-    case 2: return state.droneMobiusPositions;
-    case 3: return state.droneCryingPositions;
-    case 4: return state.droneWavePositions;
-    default: return state.droneOriginalPositions;
-  }
-}
 
-// アニメーション付きフォーメーションの位置を計算（Xボタン用）
-function getAnimatedPositionX(basePos, index, animTime) {
-  const pos = { x: basePos.x, y: basePos.y || 0, z: basePos.z || 0 };
-
-  // 猫の尻尾振りアニメーション
-  if (basePos.isTail && state.formationIndexX === 1) {
-    const tailWave = Math.sin(animTime * 3 + basePos.tailIndex * 0.3) * 0.03;
-    pos.x = basePos.x + tailWave * (basePos.tailIndex / 7);
-    pos.y = basePos.y + Math.sin(animTime * 2 + basePos.tailIndex * 0.5) * 0.01;
-  }
-
-  // 八の字（メビウス）の循環アニメーション
-  if (basePos.mobiusT !== undefined && state.formationIndexX === 2) {
-    const t = basePos.mobiusT + animTime * 0.8; // 循環速度
-    const a = 0.20;
-    const denom = 1 + Math.sin(t) * Math.sin(t);
-    pos.x = a * Math.cos(t) / denom;
-    pos.y = a * Math.sin(t) * Math.cos(t) / denom;
-    pos.z = 0;
-  }
-
-  // 泣き顔の涙アニメーション
-  if (basePos.isTear && state.formationIndexX === 3) {
-    const tearOffset = (animTime * 0.8 + basePos.tearIndex * 0.2) % 1.0;
-    const baseY = 0.02;
-    const tearLength = 0.16;
-    pos.y = baseY - tearOffset * tearLength;
-    pos.tearAlpha = 1.0 - tearOffset;
-  }
-
-  // 動く波のアニメーション
-  if (basePos.wavePhase !== undefined && state.formationIndexX === 4) {
-    const phase = basePos.wavePhase + animTime * 2;
-    pos.y = Math.sin(phase) * 0.12;
-  }
-
-  return pos;
-}
-
-// Aボタン用フォーメーションアニメーション処理（K → MU → I → (^_^)）
+// Aボタン用フォーメーションアニメーション処理（K）
 // パフォーマンス最適化: 定数の事前計算
 const ARRIVAL_THRESHOLD_SQ = 0.012 * 0.012; // 二乗で比較してsqrt省略
 const CLOSE_THRESHOLD_SQ = 0.04 * 0.04;
@@ -396,7 +355,7 @@ function updateFormationAnimation() {
   // フォーメーション開始時刻を記録
   if (!state.formationStartTime) {
     state.setFormationStartTime(now);
-    const formationNames = ['Normal', 'K', 'MU', 'I', '(^_^)'];
+    const formationNames = ['Normal', 'K'];
     console.log('Aボタン フォーメーション開始 -', formationNames[state.formationIndex]);
   }
 
@@ -413,7 +372,6 @@ function updateFormationAnimation() {
   // 共通の時間計算（ループ外で1回だけ）
   const wobbleTimeBase = now * 0.001;
   const wobbleTimeSlow = now * 0.003;
-  const isSmileFormation = state.formationIndex === 4;
 
   state.droneChildren.forEach((drone, index) => {
     if (!drone || !targetPositions[index]) return;
@@ -465,7 +423,6 @@ function updateFormationAnimation() {
       current.x = target.x + Math.sin(wobblePhase) * params.wobbleAmp;
       current.y = targetY + Math.sin(wobblePhase * 1.3 + 1) * params.wobbleAmp * 0.5;
       current.z = targetZ + Math.cos(wobblePhase * 0.8) * params.wobbleAmp;
-      drone.rotation.x = isSmileFormation ? -Math.PI / 2 : 0;
       return;
     }
 
@@ -482,7 +439,6 @@ function updateFormationAnimation() {
       current.x = target.x;
       current.y = targetY;
       current.z = targetZ;
-      drone.rotation.x = isSmileFormation ? -Math.PI / 2 : 0;
     } else {
       allReached = false;
 
@@ -542,12 +498,11 @@ function updateFormationAnimation() {
 // デバッグ用：フォーメーション状態を定期的にログ
 let lastFormationLogTime = 0;
 function logFormationState() {
-  const isAnimating = state.formationAnimating || state.formationAnimatingX;
-  if (!isAnimating) return;
+  if (!state.formationAnimating) return;
   const now = Date.now();
   if (now - lastFormationLogTime > 2000) {
     lastFormationLogTime = now;
-    const targetPositions = state.formationAnimating ? getTargetPositionsA() : getTargetPositionsX();
+    const targetPositions = getTargetPositionsA();
     let notReachedCount = 0;
     const totalCount = state.droneChildren.length;
     state.droneChildren.forEach((drone, index) => {
@@ -556,174 +511,13 @@ function logFormationState() {
       if (params && !params.hasArrived) notReachedCount++;
     });
     if (notReachedCount > 0) {
-      const formationNamesA = ['Normal', 'K', 'MU', 'I', '(^_^)'];
-      const formationNamesX = ['Normal', 'Cat🐱', '∞Mobius', 'Crying;_;', 'Wave〜'];
-      const name = state.formationAnimating ? formationNamesA[state.formationIndex] : formationNamesX[state.formationIndexX];
+      const formationNamesA = ['Normal', 'K'];
+      const name = formationNamesA[state.formationIndex];
       console.log('フォーメーション進行中 (' + name + ') - 未到着:', notReachedCount, '/', totalCount);
     }
   }
 }
 
-// Xボタン用フォーメーションアニメーション処理（猫 → メビウス → 泣き顔 → 波）
-function updateFormationAnimationX() {
-  if (!state.formationAnimatingX || state.droneChildren.length === 0) return;
-
-  const targetPositions = getTargetPositionsX();
-  let allReached = true;
-  const now = Date.now();
-
-  // フォーメーション開始時刻を記録
-  if (!state.formationStartTimeX) {
-    state.setFormationStartTimeX(now);
-    const formationNames = ['Normal', 'Cat🐱', '∞Mobius', 'Crying;_;', 'Wave〜'];
-    console.log('Xボタン フォーメーション開始 -', formationNames[state.formationIndexX]);
-  }
-
-  // アニメーション時間を更新
-  const animTime = (now - state.formationStartTimeX) / 1000;
-
-  // 基本物理パラメータ
-  const baseAcceleration = 0.0012;
-  const baseMaxSpeed = 0.010;
-  const baseMaxSpeedSq = baseMaxSpeed * baseMaxSpeed;
-  const baseFriction = 0.94;
-
-  // タイムアウト: 8秒
-  const elapsed = now - state.formationStartTimeX;
-  const timeout = 8000;
-
-  // 共通の時間計算（ループ外で1回だけ）
-  const wobbleTimeBase = now * 0.001;
-  const wobbleTimeSlow = now * 0.003;
-  const isVerticalFormation = state.formationIndexX === 1 || state.formationIndexX === 3;
-  const targetRotX = isVerticalFormation ? -Math.PI / 2 : 0;
-
-  state.droneChildren.forEach((drone, index) => {
-    if (!drone || !targetPositions[index]) return;
-
-    const target = targetPositions[index];
-    const current = drone.position;
-    const targetY = target.y || 0;
-    const targetZ = target.z || 0;
-
-    // 個体パラメータ初期化
-    if (!drone.userData.flightParams) {
-      drone.userData.flightParams = {
-        speedMultiplier: 0.8 + Math.random() * 0.4,
-        accelMultiplier: 0.8 + Math.random() * 0.4,
-        wobbleFreq: 2 + Math.random() * 2,
-        wobbleAmp: 0.0008 + Math.random() * 0.001,
-        wobblePhase: Math.random() * Math.PI * 2,
-        driftX: (Math.random() - 0.5) * 0.0001,
-        driftZ: (Math.random() - 0.5) * 0.0001,
-        hasArrived: false,
-      };
-    }
-    const params = drone.userData.flightParams;
-
-    const vel = drone.userData.velocity || { x: 0, y: 0, z: 0 };
-    const inertia = drone.userData.inertia || 1.0;
-    const reactionDelay = (drone.userData.reactionDelay || 0) * 1000;
-
-    // タイムラグ
-    if (elapsed < reactionDelay) {
-      allReached = false;
-      current.y += Math.sin(wobbleTimeSlow * params.wobbleFreq + params.wobblePhase) * params.wobbleAmp * 0.3;
-      return;
-    }
-
-    // タイムアウト: 強制到着
-    if (elapsed > timeout && !params.hasArrived) {
-      params.hasArrived = true;
-      drone.userData.velocity = { x: 0, y: 0, z: 0 };
-      const animatedTarget = getAnimatedPositionX(target, index, animTime);
-      current.x = animatedTarget.x;
-      current.y = animatedTarget.y;
-      current.z = animatedTarget.z;
-      return;
-    }
-
-    // 到着済みの場合はアニメーション付きホバリング
-    if (params.hasArrived) {
-      const animatedTarget = getAnimatedPositionX(target, index, animTime);
-      const wobblePhase = wobbleTimeBase * params.wobbleFreq + params.wobblePhase;
-      current.x = animatedTarget.x + Math.sin(wobblePhase) * params.wobbleAmp;
-      current.y = animatedTarget.y + Math.sin(wobblePhase * 1.3 + 1) * params.wobbleAmp * 0.5;
-      current.z = animatedTarget.z + Math.cos(wobblePhase * 0.8) * params.wobbleAmp;
-      drone.rotation.x = targetRotX;
-      return;
-    }
-
-    // 目標への差分
-    const dx = target.x - current.x;
-    const dy = targetY - current.y;
-    const dz = targetZ - current.z;
-    const distanceSq = dx * dx + dy * dy + dz * dz;
-
-    // 到着判定（二乗で比較）
-    if (distanceSq < ARRIVAL_THRESHOLD_SQ) {
-      params.hasArrived = true;
-      drone.userData.velocity = { x: 0, y: 0, z: 0 };
-      const animatedTarget = getAnimatedPositionX(target, index, animTime);
-      current.x = animatedTarget.x;
-      current.y = animatedTarget.y;
-      current.z = animatedTarget.z;
-      drone.rotation.x = targetRotX;
-    } else {
-      allReached = false;
-
-      const accel = baseAcceleration * params.accelMultiplier / inertia;
-
-      if (distanceSq > MIN_DISTANCE_SQ) {
-        const invDistance = 1 / Math.sqrt(distanceSq);
-        vel.x += dx * invDistance * accel;
-        vel.y += dy * invDistance * accel;
-        vel.z += dz * invDistance * accel;
-      }
-
-      vel.x += params.driftX;
-      vel.z += params.driftZ;
-      vel.y += Math.sin(wobbleTimeBase * params.wobbleFreq + params.wobblePhase) * params.wobbleAmp * 0.2;
-
-      // 速度制限（二乗で比較）
-      const maxSpeedSq = baseMaxSpeedSq * params.speedMultiplier * params.speedMultiplier * (0.9 + inertia * 0.2) * (0.9 + inertia * 0.2);
-      const speedSq = vel.x * vel.x + vel.y * vel.y + vel.z * vel.z;
-      if (speedSq > maxSpeedSq) {
-        const scale = Math.sqrt(maxSpeedSq / speedSq);
-        vel.x *= scale;
-        vel.y *= scale;
-        vel.z *= scale;
-      }
-
-      let friction = baseFriction + (inertia - 1.0) * 0.02;
-      if (distanceSq < CLOSE_THRESHOLD_SQ) {
-        friction = Math.max(0.88, friction - 0.04);
-      }
-      friction = Math.max(0.88, Math.min(0.96, friction));
-
-      vel.x *= friction;
-      vel.y *= friction;
-      vel.z *= friction;
-
-      current.x += vel.x;
-      current.y += vel.y;
-      current.z += vel.z;
-
-      // 移動中も徐々に回転
-      drone.rotation.x += (targetRotX - drone.rotation.x) * 0.05;
-
-      drone.userData.velocity = vel;
-    }
-  });
-
-  // Xボタンフォーメーションはアニメーションが継続するため、formationAnimatingXをtrueのまま維持
-  // ただし、Normalに戻った場合は完了とする
-  if (allReached && state.formationIndexX === 0) {
-    state.setFormationAnimatingX(false);
-    state.setFormationStartTimeX(null);
-    console.log('Xボタン フォーメーションアニメーション完了 - Normal');
-  }
-}
 
 // ゲームパッド移動処理
 function updateGamepadMovement() {
@@ -810,6 +604,18 @@ function updateGamepadMovement() {
   if (state.descentStartTime !== null && state.decelerationStartTime === null) {
     const floorHeight = 0;
     const currentY = state.drone.userData.basePosition ? state.drone.userData.basePosition.y : state.drone.position.y;
+
+    // 親ドローンと子ドローンを徐々に水平に戻す
+    if (state.drone) {
+      state.drone.rotation.x += (0 - state.drone.rotation.x) * 0.1;
+      state.drone.rotation.z += (0 - state.drone.rotation.z) * 0.1;
+    }
+    state.droneChildren.forEach((child) => {
+      if (child) {
+        child.rotation.x += (0 - child.rotation.x) * 0.1;
+        child.rotation.z += (0 - child.rotation.z) * 0.1;
+      }
+    });
 
     // スタック検出
     let isStuck = false;

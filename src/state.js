@@ -34,40 +34,14 @@ export function setFormationStartTime(value) { formationStartTime = value; }
 export let droneChildren = [];
 export let droneOriginalPositions = [];
 export let droneKPositions = [];
-export let droneMUPositions = [];
-export let droneIPositions = [];
-export let droneSmilePositions = []; // (^_^)
 export let rightAButtonPressed = false;
 export function setFormationIndex(value) { formationIndex = value; }
 export function setFormationAnimating(value) { formationAnimating = value; }
 export function setDroneChildren(value) { droneChildren = value; }
 export function setDroneOriginalPositions(value) { droneOriginalPositions = value; }
 export function setDroneKPositions(value) { droneKPositions = value; }
-export function setDroneMUPositions(value) { droneMUPositions = value; }
-export function setDroneIPositions(value) { droneIPositions = value; }
-export function setDroneSmilePositions(value) { droneSmilePositions = value; }
 export function setRightAButtonPressed(value) { rightAButtonPressed = value; }
 
-// Xボタン用フォーメーション切り替え（猫 → メビウス → 泣き顔 → 波 → 元）
-// 0: 元, 1: 猫, 2: メビウス(八の字), 3: 泣き顔, 4: 波
-export let formationIndexX = 0;
-export let formationAnimatingX = false;
-export let formationStartTimeX = null;
-export let formationAnimationTimeX = 0;
-export let droneCatPositions = [];
-export let droneMobiusPositions = [];
-export let droneCryingPositions = [];
-export let droneWavePositions = [];
-export let leftXButtonPressedForFormation = false;
-export function setFormationIndexX(value) { formationIndexX = value; }
-export function setFormationAnimatingX(value) { formationAnimatingX = value; }
-export function setFormationStartTimeX(value) { formationStartTimeX = value; }
-export function setFormationAnimationTimeX(value) { formationAnimationTimeX = value; }
-export function setDroneCatPositions(value) { droneCatPositions = value; }
-export function setDroneMobiusPositions(value) { droneMobiusPositions = value; }
-export function setDroneCryingPositions(value) { droneCryingPositions = value; }
-export function setDroneWavePositions(value) { droneWavePositions = value; }
-export function setLeftXButtonPressedForFormation(value) { leftXButtonPressedForFormation = value; }
 
 // 自動帰還モード用変数
 export let isAutoReturning = false;
@@ -139,8 +113,6 @@ export let tutorial4AnimDirection = 1;
 export let tutorial4GuideLine = null;
 export let tutorial4GuideDot = null;
 
-// チュートリアル3用Xボタン押下フラグ
-export let leftXButtonPressedForTutorial3 = false;
 
 // チュートリアル完了フラグ（一度完了したら再度表示しない）
 export let tutorialCompleted = false;
@@ -367,7 +339,6 @@ export function setTutorial4Animating(value) { tutorial4Animating = value; }
 export function setTutorial4AnimDirection(value) { tutorial4AnimDirection = value; }
 export function setTutorial4GuideLine(value) { tutorial4GuideLine = value; }
 export function setTutorial4GuideDot(value) { tutorial4GuideDot = value; }
-export function setLeftXButtonPressedForTutorial3(value) { leftXButtonPressedForTutorial3 = value; }
 export function setTutorialCompleted(value) { tutorialCompleted = value; }
 export function setRestartTutorial(value) { restartTutorial = value; }
 export function setTrackingLostText(value) { trackingLostText = value; }

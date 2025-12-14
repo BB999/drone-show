@@ -3282,7 +3282,7 @@ export function updateTutorial3Window() {
   const angle = Math.atan2(direction.x, direction.z);
   state.tutorial3Window.rotation.set(0, angle, 0);
 
-  // 左コントローラーの位置を取得してラインを描画（Xボタンは左コントローラー）
+  // 左コントローラーの位置を取得してラインを描画
   let leftControllerPos = null;
   const inputSources = state.xrSession.inputSources;
   for (const source of inputSources) {
@@ -3325,7 +3325,7 @@ export function updateTutorial3Window() {
     state.tutorial3GuideLine.geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
     state.tutorial3GuideLine.geometry.attributes.position.needsUpdate = true;
 
-    // ドット（Xボタン位置を示す点滅する球）の作成/更新
+    // ドット（コントローラー位置を示す点滅する球）の作成/更新
     if (!state.tutorial3GuideDot) {
       const dotGeometry = new THREE.SphereGeometry(0.015, 16, 16);
       const dotMaterial = new THREE.MeshBasicMaterial({

@@ -107,11 +107,8 @@ export function handleRightControllerButtons() {
       const isAPressed = aButton && aButton.pressed;
 
       if (isAPressed && !state.rightAButtonPressed) {
-        // Xボタンフォーメーションをリセット
-        state.setFormationIndexX(0);
-        state.setFormationAnimatingX(false);
-        // フォーメーションインデックスを進める (0: 元, 1: K, 2: MU, 3: I, 4: (^_^))
-        const nextIndex = (state.formationIndex + 1) % 5;
+        // フォーメーションインデックスを進める (0: 元, 1: K)
+        const nextIndex = (state.formationIndex + 1) % 2;
         state.setFormationIndex(nextIndex);
         state.setFormationAnimating(true);
         state.setFormationStartTime(null);
@@ -126,7 +123,7 @@ export function handleRightControllerButtons() {
           }
         });
         playButtonSound();
-        const formationNames = ['Normal', 'K', 'MU', 'I', '(^_^)'];
+        const formationNames = ['Normal', 'K'];
         updateInfo(formationNames[nextIndex] + ' Formation');
         console.log('Aボタン フォーメーション切り替え:', formationNames[nextIndex]);
       }
@@ -250,34 +247,23 @@ export function handleStartupSequence() {
         }, 16);
       }
 
-      // 起動完了後：Xボタンでフォーメーション切り替え（猫 → メビウス → 泣き顔 → 波 → 元）
-      // アニメーション中でも押せる
-      if (isXPressed && !state.leftXButtonPressedForFormation && state.isStartupComplete && !state.isShuttingDown) {
-        // Aボタンフォーメーションをリセット
+      // 起動完了後：Xボタンで着陸シーケンス開始
+      if (isXPressed && !state.leftXButtonPressed && state.isStartupComplete && !state.isShuttingDown) {
+        state.setIsShuttingDown(true);
+        state.setIsStartupComplete(false);
+        state.setDescentStartTime(Date.now());
+        state.setDescentLastY(null);
+        state.setDescentStuckStartTime(null);
+
+        // フォーメーションをリセット
         state.setFormationIndex(0);
         state.setFormationAnimating(false);
-        // フォーメーションインデックスを進める (0: 元, 1: 猫, 2: メビウス, 3: 泣き顔, 4: 波)
-        const nextIndex = (state.formationIndexX + 1) % 5;
-        state.setFormationIndexX(nextIndex);
-        state.setFormationAnimatingX(true);
-        state.setFormationStartTimeX(null);
-        state.setFormationAnimationTimeX(0);
-        // 各ドローンの速度をリセット＆反応遅延を再設定＆到着フラグをリセット
-        state.droneChildren.forEach((drone) => {
-          if (drone) {
-            drone.userData.velocity = { x: 0, y: 0, z: 0 };
-            drone.userData.reactionDelay = Math.random() * 1.0;
-            if (drone.userData.flightParams) {
-              drone.userData.flightParams.hasArrived = false;
-            }
-          }
-        });
+
+        console.log('着陸シーケンス開始');
+        updateInfo('Landing...');
+        createSequenceStatusText(t('status', 'shuttingDown'));
         playButtonSound();
-        const formationNames = ['Normal', 'Cat🐱', '∞Mobius', 'Crying;_;', 'Wave〜'];
-        updateInfo(formationNames[nextIndex] + ' Formation');
-        console.log('Xボタン フォーメーション切り替え:', formationNames[nextIndex]);
       }
-      state.setLeftXButtonPressedForFormation(isXPressed);
 
       state.setLeftXButtonPressed(isXPressed);
     }
@@ -715,15 +701,6 @@ function handleHandRelease() {
           case 2: targetPositions = state.droneMUPositions; break;
           case 3: targetPositions = state.droneIPositions; break;
           case 4: targetPositions = state.droneSmilePositions; break;
-          default: targetPositions = state.droneOriginalPositions; break;
-        }
-      } else if (state.formationAnimatingX || state.formationIndexX > 0) {
-        // Xボタンフォーメーション
-        switch (state.formationIndexX) {
-          case 1: targetPositions = state.droneCatPositions; break;
-          case 2: targetPositions = state.droneMobiusPositions; break;
-          case 3: targetPositions = state.droneCryingPositions; break;
-          case 4: targetPositions = state.droneWavePositions; break;
           default: targetPositions = state.droneOriginalPositions; break;
         }
       } else {
